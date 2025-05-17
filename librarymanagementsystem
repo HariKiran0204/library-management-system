@@ -1,0 +1,182 @@
+# Library Management System using CSV files
+
+import csv
+import bcrypt
+from datetime import datetime, timedelta
+import os
+
+# File paths
+BOOKS_CSV = "data/books.csv"
+MEMBERS_CSV = "data/members.csv"
+LOANS_CSV = "data/loans.csv"
+
+# Ensure data directory exists
+os.makedirs("data", exist_ok=True)
+
+def hash_password(password):
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+
+def check_password(password, hashed):
+    return bcrypt.checkpw(password.encode(), hashed.encode())
+
+def load_csv(file_path):
+    try:
+        with open(file_path, mode='r', newline='') as file:
+            return list(csv.DictReader(file))
+    except FileNotFoundError:
+        return []
+
+def save_csv(file_path, data, fieldnames):
+    with open(file_path, mode='w', newline='') as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(data)
+
+def register_member():
+    members = load_csv(MEMBERS_CSV)
+    member_id = input("Enter new Member ID: ")
+    if any(m['MemberID'] == member_id for m in members):
+        print("Member ID already exists.")
+        return
+    name = input("Enter member name: ")
+    password = input("Enter password: ")
+    hashed = hash_password(password).decode()
+    members.append({"MemberID": member_id, "Name": name, "PasswordHash": hashed})
+    save_csv(MEMBERS_CSV, members, ["MemberID", "Name", "PasswordHash"])
+    print("Member registered successfully.")
+
+def register_book():
+    books = load_csv(BOOKS_CSV)
+    isbn = input("Enter ISBN: ")
+    if any(book['ISBN'] == isbn for book in books):
+        print("Book already exists.")
+        return
+    title = input("Enter Title: ")
+    author = input("Enter Author: ")
+    total = int(input("Enter Total Copies: "))
+    books.append({"ISBN": isbn, "Title": title, "Author": author, "CopiesTotal": str(total), "CopiesAvailable": str(total)})
+    save_csv(BOOKS_CSV, books, ["ISBN", "Title", "Author", "CopiesTotal", "CopiesAvailable"])
+    print("Book registered successfully.")
+
+def return_book(member_id):
+    loans = load_csv(LOANS_CSV)
+    books = load_csv(BOOKS_CSV)
+    active_loans = [loan for loan in loans if loan['MemberID'] == member_id and loan['ReturnDate'] == '']
+    if not active_loans:
+        print("No active loans.")
+        return
+    print("Active Loans:")
+    for i, loan in enumerate(active_loans):
+        print(f"{i+1}. {loan['ISBN']} (Due: {loan['DueDate']})")
+    try:
+        choice = int(input("Enter the number to return: ")) - 1
+        if choice < 0 or choice >= len(active_loans):
+            print("Invalid selection.")
+            return
+    except ValueError:
+        print("Invalid input.")
+        return
+    loan = active_loans[choice]
+    loan['ReturnDate'] = datetime.today().strftime("%Y-%m-%d")
+    for book in books:
+        if book['ISBN'] == loan['ISBN']:
+            book['CopiesAvailable'] = str(int(book['CopiesAvailable']) + 1)
+    save_csv(LOANS_CSV, loans, ["LoanID", "MemberID", "ISBN", "LoanDate", "DueDate", "ReturnDate"])
+    save_csv(BOOKS_CSV, books, ["ISBN", "Title", "Author", "CopiesTotal", "CopiesAvailable"])
+    print("Book returned successfully.")
+
+def view_overdue():
+    today = datetime.today()
+    loans = load_csv(LOANS_CSV)
+    overdue = [loan for loan in loans if loan['ReturnDate'] == '' and datetime.strptime(loan['DueDate'], "%Y-%m-%d") < today]
+    print("\nOverdue Books:")
+    for loan in overdue:
+        print(f"Member {loan['MemberID']} | Book {loan['ISBN']} | Due: {loan['DueDate']}")
+
+def librarian_menu():
+    while True:
+        print("\n-- Librarian Menu --")
+        print("1. Register Member\n2. Register Book\n3. View Overdue Loans\n4. Logout")
+        choice = input("Choose: ")
+        if choice == '1':
+            register_member()
+        elif choice == '2':
+            register_book()
+        elif choice == '3':
+            view_overdue()
+        elif choice == '4':
+            break
+
+def librarian_login():
+    password = input("Enter librarian password: ")
+    if password == "admin123":  # simple check; ideally hash and store
+        print("Librarian login successful.")
+        librarian_menu()
+    else:
+        print("Incorrect password.")
+
+def member_login():
+    member_id = input("Enter Member ID: ")
+    password = input("Enter Password: ")
+    members = load_csv(MEMBERS_CSV)
+    for member in members:
+        if member["MemberID"] == member_id:
+            if check_password(password, member["PasswordHash"]):
+                print(f"Login successful. Welcome {member['Name']}!")
+                return member_id
+    print("Invalid credentials.")
+    return None
+
+def list_books():
+    books = load_csv(BOOKS_CSV)
+    print("\nAvailable Books:")
+    for book in books:
+        print(f"{book['ISBN']} - {book['Title']} by {book['Author']} [{book['CopiesAvailable']}/{book['CopiesTotal']}]")
+
+def issue_book(member_id):
+    isbn = input("Enter ISBN to borrow: ")
+    books = load_csv(BOOKS_CSV)
+    loans = load_csv(LOANS_CSV)
+    for book in books:
+        if book["ISBN"] == isbn and int(book["CopiesAvailable"]) > 0:
+            loan_id = str(len(loans)+1)
+            today = datetime.today().strftime("%Y-%m-%d")
+            due = (datetime.today() + timedelta(days=14)).strftime("%Y-%m-%d")
+            loans.append({"LoanID": loan_id, "MemberID": member_id, "ISBN": isbn, "LoanDate": today, "DueDate": due, "ReturnDate": ""})
+            book["CopiesAvailable"] = str(int(book["CopiesAvailable"]) - 1)
+            save_csv(LOANS_CSV, loans, ["LoanID", "MemberID", "ISBN", "LoanDate", "DueDate", "ReturnDate"])
+            save_csv(BOOKS_CSV, books, ["ISBN", "Title", "Author", "CopiesTotal", "CopiesAvailable"])
+            print("Book issued successfully.")
+            return
+    print("Book not available or ISBN incorrect.")
+
+def member_menu(member_id):
+    while True:
+        print("\n-- Member Menu --")
+        print("1. View Books\n2. Borrow Book\n3. Return Book\n4. Logout")
+        choice = input("Choose: ")
+        if choice == '1':
+            list_books()
+        elif choice == '2':
+            issue_book(member_id)
+        elif choice == '3':
+            return_book(member_id)
+        elif choice == '4':
+            break
+
+def main():
+    while True:
+        print("\n--- Library System ---")
+        print("1. Librarian Login\n2. Member Login\n3. Exit")
+        choice = input("Choose an option: ")
+        if choice == '1':
+            librarian_login()
+        elif choice == '2':
+            member_id = member_login()
+            if member_id:
+                member_menu(member_id)
+        elif choice == '3':
+            break
+
+if __name__ == "__main__":
+    main()
